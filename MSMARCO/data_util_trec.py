@@ -80,7 +80,6 @@ class MsMarcoData:
 			print('Build vocabulary')
 			if not os.path.exists(self.settings["WORKING_PATH"]):
 				os.makedirs(self.settings["WORKING_PATH"])
-
 			
 			def _add_words_to_vocab(raw_word_list):
 				word_list = [w.strip() for w in raw_word_list]
@@ -98,7 +97,7 @@ class MsMarcoData:
 					_add_words_to_vocab(words)
 
 			# add query words
-			query_files = { x: self.settings['QUERY_PATH'] + '/queries.%s.bm25.json' %x for x in self.SET_LIST}
+			query_files = { x: self.settings['QUERY_PATH'] + '/queries.%s.json' %x for x in self.SET_LIST}
 			for set_name in self.SET_LIST:
 				if not os.path.exists(query_files[set_name]):
 					continue
@@ -132,6 +131,7 @@ class MsMarcoData:
 		self.context_qid_feature_map = {}
 		self.max_query_length = 0
 		if os.path.isfile(doc_file): # if the processed collection exists, read it
+			print('Load passage features...')
 			with gzip.open(doc_file, 'rt') as fin:
 				for line in fin:
 					arr = line.strip().split('\t')
@@ -147,23 +147,9 @@ class MsMarcoData:
 					if len(self.example_pid_feature_map) % 10000 == 0:
 						print('Read %d docs' % len(self.example_pid_feature_map))
 
-			for set_name in self.SET_LIST:
-				print('Read %s' % set_name)
-				query_file = self.settings["WORKING_PATH"] + '/%s_QUERY_min_count_%d.txt.gz' % (set_name, self.settings["word_min_count"])
-				with gzip.open(query_file, 'rt') as fin:
-					for line in fin:
-						arr = line.strip().split('\t')
-						qid = int(arr[0])
-						words = []
-						if len(arr) > 1:
-							words = [int(x) for x in arr[1].split(' ')]
-						if qid not in self.context_qid_feature_map:
-							self.context_qid_feature_map[qid] = {}
-						self.context_qid_feature_map[qid]["query_unigrams"] = words
-						if len(words) > self.max_query_length:
-							self.max_query_length = len(words)
 		else: # if the collection hasn't been processed yet, process it and store the file.
 			# load raw collection
+			print('Create passage features...')
 			def _get_word_idxs(words):
 				word_idxs = []
 				for i in range(len(words)):
@@ -192,16 +178,28 @@ class MsMarcoData:
 				for pid in pid_list:
 					word_idxs = self.example_pid_feature_map[pid]["doc_unigrams"]
 					fout.write('%d\t%s\n' % (pid, ' '.join([str(x) for x in word_idxs])))
-			
-
-			# Load queries and build context features
-			query_files = { x: self.settings['QUERY_PATH'] + '/queries.%s.bm25.json' %x for x in self.SET_LIST}
-			for set_name in self.SET_LIST:
-				if not os.path.exists(query_files[set_name]):
-					continue
-				print('Read %s' % set_name)
+		
+		for set_name in self.SET_LIST:
+			print('Read %s queries' % set_name)
+			query_file = self.settings["WORKING_PATH"] + '/%s_QUERY_min_count_%d.txt.gz' % (set_name, self.settings["word_min_count"])
+			if os.path.isfile(query_file):
+				with gzip.open(query_file, 'rt') as fin:
+					for line in fin:
+						arr = line.strip().split('\t')
+						qid = int(arr[0])
+						words = []
+						if len(arr) > 1:
+							words = [int(x) for x in arr[1].split(' ')]
+						if qid not in self.context_qid_feature_map:
+							self.context_qid_feature_map[qid] = {}
+						self.context_qid_feature_map[qid]["query_unigrams"] = words
+						if len(words) > self.max_query_length:
+							self.max_query_length = len(words)
+			else:
+				# Load queries and build context features
+				print('Create %s query files' % set_name)
 				qid_list = []
-				with open(query_files[set_name]) as fin:
+				with open(self.settings['QUERY_PATH'] + '/queries.%s.json' % set_name) as fin:
 					data = json.load(fin)
 					for query in data['queries']:
 						qid = int(query['number'])
@@ -215,8 +213,7 @@ class MsMarcoData:
 						if len(word_idxs) > self.max_query_length:
 							self.max_query_length = len(word_idxs)
 				# write processed collection
-				query_file = doc_file = self.settings["WORKING_PATH"] + '/%s_QUERY_min_count_%d.txt.gz' % (set_name, self.settings["word_min_count"])
-				with gzip.open(doc_file, 'wt') as fout:
+				with gzip.open(query_file, 'wt') as fout:
 					for qid in qid_list:
 						word_idxs = self.context_qid_feature_map[qid]["query_unigrams"]
 						fout.write('%d\t%s\n' % (qid, " ".join([str(x) for x in word_idxs])))
@@ -272,6 +269,8 @@ class MsMarcoData:
 		with open(self.settings["%s_data_path" % set_name]['path']) as fin:
 			for line in fin:
 				qid, pid = line_parser(line)
+				if qid not in self.context_qid_feature_map or pid not in self.example_pid_feature_map:
+					continue
 				total_docs += 1
 				label = 0
 				if qid in qrel_map and pid in qrel_map[qid]: 
@@ -299,8 +298,8 @@ class MsMarcoData:
 			#label_list.append(np.ones([list_size], dtype=np.float32) * -1.)
 			label_list.append(np.zeros([list_size], dtype=np.float32))
 			# build context feature, which is shared among the whole list
-			if qid not in self.context_qid_feature_map:
-				continue
+			#if qid not in self.context_qid_feature_map:
+			#	continue
 			for k in context_feature_columns:
 				if len(self.context_qid_feature_map[qid][k]) < self.max_query_length:
 					padding = [-1 for _ in range(self.max_query_length - len(self.context_qid_feature_map[qid][k]))]
@@ -311,8 +310,8 @@ class MsMarcoData:
 				feature_map[k].append([])
 				index = 0
 				for pid, label in qid_to_doc[qid]:
-					if pid not in self.example_pid_feature_map:
-						continue
+					#if pid not in self.example_pid_feature_map:
+					#	continue
 					if index < list_size:
 						if len(self.example_pid_feature_map[pid][k]) < self.max_doc_length:
 							padding = [-1 for _ in range(self.max_doc_length - len(self.example_pid_feature_map[pid][k]))]

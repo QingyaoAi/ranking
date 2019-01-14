@@ -83,7 +83,7 @@ flags.DEFINE_list("hidden_layer_dims", ["256", "128", "64"],
 									"Sizes for hidden layers.")
 
 #flags.DEFINE_integer("num_features", 136, "Number of features per document.")
-flags.DEFINE_integer("list_size", 500, "List size used for training. -1 means using all docs.")
+flags.DEFINE_integer("list_size", -1, "List size used for training. -1 means using all docs.")
 flags.DEFINE_integer("group_size", 1, "Group size used in score function.")
 
 flags.DEFINE_string("loss", "pairwise_logistic_loss",
