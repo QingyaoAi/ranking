@@ -196,9 +196,9 @@ def get_eval_inputs(features, labels, batch_size):
 			#k: tf.placeholder(tf.string, (len(v), len(v[0]), len(v[0][0]))) for k, v in six.iteritems(features)
 		}
 		labels_placeholder = tf.placeholder(labels.dtype, labels.shape, name='label')
-		dataset = tf.data.Dataset.from_tensors((features_placeholder,
+		dataset = tf.data.Dataset.from_tensor_slices((features_placeholder,
 												labels_placeholder))
-		#dataset = dataset.shuffle(batch_size)
+		dataset = dataset.batch(batch_size)
 		iterator = dataset.make_initializable_iterator()
 		feed_dict = {labels_placeholder: labels}
 		feed_dict.update(
