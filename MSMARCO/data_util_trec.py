@@ -248,7 +248,6 @@ class MsMarcoData:
 		# Read data
 		qid_to_doc = {} # The list of docs seen so far for a query.
 		max_list_length = 0
-		total_docs = 0
 		def _create_line_parser(data_type):
 			if data_type == 'pair':
 				def pair_line_parser(line):
@@ -271,13 +270,12 @@ class MsMarcoData:
 				qid, pid = line_parser(line)
 				if qid not in self.context_qid_feature_map or pid not in self.example_pid_feature_map:
 					continue
-				total_docs += 1
 				label = 0
 				if qid in qrel_map and pid in qrel_map[qid]: 
 					label = 1
 				if qid not in qid_to_doc:
 					qid_to_doc[qid] = []
-				qid_to_doc[qid].append((pid, label))
+				qid_to_doc[qid].append((pid, label)) # Please make sure that there are not repeat pid for each qid
 				if len(qid_to_doc[qid]) > max_list_length:
 					max_list_length = len(qid_to_doc[qid])
 		list_size = list_size if list_size > 0 else max_list_length
@@ -290,6 +288,7 @@ class MsMarcoData:
 		for k in example_feature_columns:
 			feature_map[k] = []
 		label_list = []
+		total_docs = 0
 		discarded_docs = 0
 		# Each feature is mapped an array with [num_queries, list_size, 1]. Label has
 		# a shape of [num_queries, list_size]. We use list for each of them due to the
