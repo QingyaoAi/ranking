@@ -89,6 +89,10 @@ flags.DEFINE_integer("group_size", 1, "Group size used in score function.")
 flags.DEFINE_string("loss", "pairwise_logistic_loss",
 										"The RankingLossKey for loss function.")
 
+flags.DEFINE_boolean("evaluation_only", False, "Only conduct evaluation if True.")
+flags.DEFINE_boolean("train_from_scratch", False, 
+										"Delete existing files in output_dir and train the model from scratch if True.")
+
 FLAGS = flags.FLAGS
 
 # get the shape of a list
@@ -258,9 +262,14 @@ def get_eval_metric_fns():
 	"""Returns a dict from name to metric functions."""
 	metric_fns = {}
 	metric_fns.update({
+			"metric/mrr@%d" % topn: tfr.metrics.make_ranking_metric_fn(
+					tfr.metrics.RankingMetricKey.MRR, topn=topn)
+			for topn in [10]
+	})
+	metric_fns.update({
 			"metric/%s" % name: tfr.metrics.make_ranking_metric_fn(name) for name in [
 					tfr.metrics.RankingMetricKey.ARP,
-					tfr.metrics.RankingMetricKey.ORDERED_PAIR_ACCURACY,
+					#tfr.metrics.RankingMetricKey.ORDERED_PAIR_ACCURACY,
 			]
 	})
 	metric_fns.update({
@@ -362,14 +371,60 @@ def train_and_eval():
 	# Evaluate on the test data.
 	estimator.evaluate(input_fn=test_input_fn, hooks=[test_hook])
 
+def eval_only():
+	"""Train and Evaluate."""
+	# load collection
+	data = data_util.MsMarcoData(FLAGS.setting_path)
+	context_feature_columns, example_feature_columns = data.create_feature_columns()
+
+	# load test
+	features_test, labels_test = data.load_feature_from_data("eval",
+															FLAGS.list_size)
+	test_input_fn, test_hook = get_eval_inputs(features_test, labels_test, FLAGS.train_batch_size)
+	input_size = FLAGS.list_size if FLAGS.list_size > 0 else data.max_list_length
+	tf.logging.info("Actual list size: {}".format(input_size))
+
+	def _train_op_fn(loss):
+		"""Defines train op used in ranking head."""
+		return tf.contrib.layers.optimize_loss(
+				loss=loss,
+				global_step=tf.train.get_global_step(),
+				learning_rate=FLAGS.learning_rate,
+				optimizer="Adagrad")
+
+	ranking_head = tfr.head.create_ranking_head(
+			loss_fn=tfr.losses.make_loss_fn(FLAGS.loss),
+			eval_metric_fns=get_eval_metric_fns(),
+			train_op_fn=_train_op_fn)
+
+	config = tf.ConfigProto()
+	config.gpu_options.allow_growth = True
+	#config.run_options.report_tensor_allocations_upon_oom = True
+	estimator = tf.estimator.Estimator(
+			model_fn=tfr.model.make_groupwise_ranking_fn(
+					group_score_fn=make_score_fn(data),
+					group_size=FLAGS.group_size,
+					transform_fn=make_transform_fn(input_size, context_feature_columns, example_feature_columns), # add context feature
+					#transform_fn=tfr.feature.make_identity_transform_fn(context_feature_columns.keys()), # add context feature
+					ranking_head=ranking_head),
+			config=tf.estimator.RunConfig(
+					FLAGS.output_dir, save_checkpoints_steps=1000, session_config=config))
+
+	# Evaluate on the test data.
+	estimator.evaluate(input_fn=test_input_fn, hooks=[test_hook])
+
 
 def main(_):
 	tf.logging.set_verbosity(tf.logging.INFO)
-	if os.path.exists(FLAGS.output_dir):
+	if not os.path.exists(FLAGS.output_dir):
+		os.makedirs(FLAGS.output_dir)
+	if FLAGS.train_from_scratch:
 		os.system('rm -r %s' % FLAGS.output_dir)
-	os.makedirs(FLAGS.output_dir)
-
-	train_and_eval()
+	
+	if not FLAGS.evaluation_only:
+		train_and_eval()
+	else:
+		eval_only()
 
 
 if __name__ == "__main__":
