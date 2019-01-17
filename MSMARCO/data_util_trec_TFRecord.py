@@ -544,8 +544,10 @@ class MsMarcoData:
 			record_file_path = root_path + '%d.tfrecord' % count_record
 			fout = tf.python_io.TFRecordWriter(record_file_path)
 			file_paths.append(record_file_path)
+			example_id_fout = gzip.open(root_path + 'qid_pid_list.txt.gz', 'wb')
 			for qid in qid_to_doc:
 				feature_map = {}
+				id_list = [str(qid)]
 				# create label
 				feature_map['label'] = [-1.0 for _ in range(list_size)]
 				for i in range(len(qid_to_doc[qid])):
@@ -553,9 +555,11 @@ class MsMarcoData:
 						pid = qid_to_doc[qid][i][0]
 						label = qid_to_doc[qid][i][1]
 						feature_map['label'][i] = label
+						id_list.append(str(pid))
 					else:
 						discarded_docs += 1
 					total_docs += 1
+				example_id_fout.write(bytes('%s\n' % '\t'.join(id_list), 'UTF-8')) # output qid and corresponding pid list
 
 				# create context features
 				for k in context_feature_columns:
@@ -635,11 +639,14 @@ class MsMarcoData:
 					record_file_path = root_path + '%d.tfrecord' % count_record
 					fout = tf.python_io.TFRecordWriter(record_file_path)
 					file_paths.append(record_file_path)
+			
+			example_id_fout.close()
 			fout.close()
 
 			# write data info
 			data_info = {
 				'file_paths' : file_paths,
+				'example_id_file' : root_path + 'qid_pid_list.txt.gz',
 				'max_list_length' : max_list_length,
 				'query_number' : len(qid_to_doc),
 				'total_document' : total_docs,
@@ -654,6 +661,31 @@ class MsMarcoData:
 
 		self.list_size = list_size
 		return file_paths
+
+	def generate_trec_ranklist_with_result_generator(self, set_name, list_size, model_name, 
+														result_generator, file_writer, rank_cut):
+		'''	Generate TREC format ranklist with result generator (estimator.predict())'''
+
+		root_path = self.settings["WORKING_PATH"] + '/list_size_%d/%s/' % (list_size, set_name)
+		data_info = json.load(open(root_path + '/info.json'))
+		with gzip.open(data_info['example_id_file']) as fin:
+			for x in result_generator:
+				arr = fin.readline().decode('UTF-8').strip().split('\t')
+				qid = arr[0]
+				pid_list = arr[1:]
+				actual_list_size = len(pid_list)
+				sorted_id_list = sorted(range(len(x[:actual_list_size])), key=lambda k: x[k], reverse=True)
+				rank = 1
+				for idx in sorted_id_list[:rank_cut]:
+					file_writer.write('%s Q0 %s %d %.4f %s\n' % (qid, pid_list[idx], rank, x[idx], model_name))
+					rank += 1
+
+
+
+
+
+
+
 
 
 

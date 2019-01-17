@@ -88,6 +88,7 @@ flags.DEFINE_list("hidden_layer_dims", ["256", "128", "64"],
 #flags.DEFINE_integer("num_features", 136, "Number of features per document.")
 flags.DEFINE_integer("list_size", 1000, "List size used for training. -1 means using all docs.")
 flags.DEFINE_integer("group_size", 1, "Group size used in score function.")
+flags.DEFINE_integer("rank_cut", 10, "The number of documents output for each query in prediction phase.")
 
 flags.DEFINE_string("loss", "pairwise_logistic_loss",
 										"The RankingLossKey for loss function.")
@@ -308,9 +309,6 @@ def train_and_eval():
 	vali_input_fn, vali_hook = get_eval_inputs(data.get_file_paths("dev", data.list_size), data.get_TFReord_parser(), 
 												FLAGS.train_batch_size, FLAGS.dev_prefetch_buffer_size)
 
-	test_input_fn, test_hook = get_eval_inputs(data.get_file_paths("eval", data.list_size), data.get_TFReord_parser(), 
-												FLAGS.train_batch_size, FLAGS.eval_prefetch_buffer_size)
-
 
 	def _train_op_fn(loss):
 		"""Defines train op used in ranking head."""
@@ -354,17 +352,20 @@ def train_and_eval():
 	tf.estimator.train_and_evaluate(estimator, train_spec, vali_spec)
 
 	# Evaluate on the test data.
+	test_input_fn, test_hook = get_eval_inputs(data.get_file_paths("eval", data.list_size), data.get_TFReord_parser(), 
+												FLAGS.train_batch_size, FLAGS.eval_prefetch_buffer_size)
 	estimator.evaluate(input_fn=test_input_fn, hooks=[test_hook])
+
 
 def eval_only():
 	"""Train and Evaluate."""
 	# load collection
-	data = data_util.MsMarcoData(FLAGS.setting_path)
+	data = data_util.MsMarcoData(FLAGS.setting_path, FLAGS.list_size)
 	context_feature_columns, example_feature_columns = data.create_feature_columns()
 
 	# load test
 	test_input_fn, test_hook = get_eval_inputs(data.get_file_paths("eval", FLAGS.list_size), data.get_TFReord_parser(), 
-												FLAGS.train_batch_size. FLAGS.eval_prefetch_buffer_size)
+												FLAGS.train_batch_size, FLAGS.eval_prefetch_buffer_size)
 	input_size = FLAGS.list_size if FLAGS.list_size > 0 else data.max_list_length
 	tf.logging.info("Actual list size: {}".format(input_size))
 
@@ -396,6 +397,14 @@ def eval_only():
 
 	# Evaluate on the test data.
 	estimator.evaluate(input_fn=test_input_fn, hooks=[test_hook])
+
+	# Make prediction and output trec list
+	predict_input_fn, predict_hook = get_eval_inputs(data.get_file_paths("eval", FLAGS.list_size), data.get_TFReord_parser(), 
+												FLAGS.train_batch_size, FLAGS.eval_prefetch_buffer_size)
+	result_generator = estimator.predict(input_fn=predict_input_fn, hooks=[predict_hook])
+	with open(FLAGS.output_dir + '/eval.trec.ranklist', 'w') as fout:
+		data.generate_trec_ranklist_with_result_generator('eval', FLAGS.list_size, 
+														'Groupwise', result_generator, fout, FLAGS.rank_cut)
 
 
 def main(_):
