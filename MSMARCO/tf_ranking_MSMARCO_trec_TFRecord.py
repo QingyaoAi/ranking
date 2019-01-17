@@ -210,14 +210,16 @@ def make_score_fn(data):
 					tf.layers.flatten(group_features[name])
 					for name in sorted(example_feature_columns)
 			]
-			print(group_input[0].shape)
-			print(group_input[0].dtype)
+			#for x in group_input:
+			#	print(x.shape)
+			
 			context_input = [
 					tf.layers.flatten(context_features[name])
 					for name in sorted(context_feature_columns)
 			]
-			print(context_input[0].shape)
-			print(context_input[0].dtype)
+			#for x in context_input:
+			#	print(x.shape)
+			
 			final_input = context_input + group_input
 			input_layer = tf.concat(final_input, 1)
 			tf.summary.scalar("input_sparsity", tf.nn.zero_fraction(input_layer))

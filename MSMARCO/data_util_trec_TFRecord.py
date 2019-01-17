@@ -454,6 +454,7 @@ class MsMarcoData:
 			features = tf.parse_single_example(serialized_example,
 												features=feature_map)
 			label = features.pop('label')
+			print(features['bm25s'])
 			
 			return features, label
 			
@@ -537,7 +538,6 @@ class MsMarcoData:
 
 			# Build feature map
 			context_feature_columns, example_feature_columns = self.create_feature_columns()
-			numerical_feature_scale_map = {}
 			total_docs = 0
 			discarded_docs = 0
 			count_record = 0
@@ -569,15 +569,7 @@ class MsMarcoData:
 							feature_map[idx_key].append(i)
 							feature_map[value_key].append(context_feature_vector[i])
 					else: # use dense features
-						feature_map[k] = self.context_qid_feature_map[qid][k]
-						if k not in numerical_feature_scale_map:
-							numerical_feature_scale_map[k] = [feature_map[k], feature_map[k]]
-						else:
-							if feature_map[k] < numerical_feature_scale_map[k][0]:
-								numerical_feature_scale_map[k][0] = feature_map[k]
-							if feature_map[k] > numerical_feature_scale_map[k][1]:
-								numerical_feature_scale_map[k][1] = feature_map[k]
-						feature_map[k] = [feature_map[k]]
+						feature_map[k] = [self.context_qid_feature_map[qid][k]]
 				
 				# compute dense example features	
 				dense_features = {}
@@ -594,13 +586,6 @@ class MsMarcoData:
 							if key not in dense_features:
 								dense_features[key] = [self.padding_number for _ in range(list_size)]
 							dense_features[key][k] = value
-							if key not in numerical_feature_scale_map:
-								numerical_feature_scale_map[key] = [value, value]
-							else:
-								if value < numerical_feature_scale_map[key][0]:
-									numerical_feature_scale_map[key][0] = value
-								if value > numerical_feature_scale_map[key][1]:
-									numerical_feature_scale_map[key][1] = value
 
 				# create example features
 				for k in example_feature_columns:
@@ -626,9 +611,19 @@ class MsMarcoData:
 				
 				# convert feature map to example
 				for key in feature_map:
-					if key.endswith('idx') or key.endswith('int_value'):
+					if key.endswith('idx') or key.endswith('int_value'): # key for sparse features
 						feature_map[key] = tf.train.Feature(int64_list=tf.train.Int64List(value=feature_map[key]))
-					else:
+					elif key != 'label': # key for numerical features
+						for i in range(len(feature_map[key])):
+							if feature_map[key][i] == self.padding_number: # its a padding, just set as 0
+								feature_map[key][i] = 0.0
+							else:
+								feature_map[key][i] = (
+									feature_map[key][i] - self.numerical_feature_scale_map[key][0])/(
+									self.numerical_feature_scale_map[key][1] - self.numerical_feature_scale_map[key][0] + self.smoothing
+									)
+						feature_map[key] = tf.train.Feature(float_list=tf.train.FloatList(value=feature_map[key]))
+					else: # this is a key for 'label'
 						feature_map[key] = tf.train.Feature(float_list=tf.train.FloatList(value=feature_map[key]))
 				feature_example = tf.train.Example(features=tf.train.Features(feature=feature_map))
 
@@ -653,12 +648,9 @@ class MsMarcoData:
 			with open(data_info_file, 'w') as fout:
 				json.dump(data_info, fout, sort_keys = True, indent = 4)
 			
-
 			tf.logging.info("Number of queries: {}".format(len(qid_to_doc)))
 			tf.logging.info("Number of documents in total: {}".format(total_docs))
 			tf.logging.info("Number of documents discarded: {}".format(discarded_docs))
-
-			print(numerical_feature_scale_map)
 
 		self.list_size = list_size
 		return file_paths
