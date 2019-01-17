@@ -75,6 +75,9 @@ flags.DEFINE_string("setting_path", None, "The json file path used for experimen
 flags.DEFINE_string("output_dir", None, "Output directory for models.")
 
 flags.DEFINE_integer("train_batch_size", 256, "The batch size for training.")
+flags.DEFINE_integer("train_prefetch_buffer_size", -1, "The batch size for training.")
+flags.DEFINE_integer("dev_prefetch_buffer_size", -1, "The batch size for training.")
+flags.DEFINE_integer("eval_prefetch_buffer_size", -1, "The batch size for training.")
 flags.DEFINE_integer("num_train_steps", 100000, "Number of steps for training.")
 
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for optimizer.")
@@ -83,7 +86,7 @@ flags.DEFINE_list("hidden_layer_dims", ["256", "128", "64"],
 									"Sizes for hidden layers.")
 
 #flags.DEFINE_integer("num_features", 136, "Number of features per document.")
-flags.DEFINE_integer("list_size", -1, "List size used for training. -1 means using all docs.")
+flags.DEFINE_integer("list_size", 1000, "List size used for training. -1 means using all docs.")
 flags.DEFINE_integer("group_size", 1, "Group size used in score function.")
 
 flags.DEFINE_string("loss", "pairwise_logistic_loss",
@@ -139,7 +142,7 @@ class IteratorInitializerHook(tf.train.SessionRunHook):
 		self.iterator_initializer_fn(session)
 
 
-def get_train_inputs(file_paths, parser, batch_size):
+def get_train_inputs(file_paths, parser, batch_size, prefetch_buffer_size):
 	"""Set up training input in batches."""
 	iterator_initializer_hook = IteratorInitializerHook()
 
@@ -149,14 +152,14 @@ def get_train_inputs(file_paths, parser, batch_size):
 
 		filename_placeholder = tf.placeholder(tf.string, shape=[None])
 		dataset = tf.data.TFRecordDataset(filename_placeholder)
-		dataset = dataset.shuffle(batch_size*10).repeat()
+		dataset = dataset.shuffle(batch_size).repeat()
 		
 		#dataset = dataset.map(parser, num_parallel_calls=8)
 		#dataset = dataset.batch(batch_size)
-		dataset = dataset.apply(tf.contrib.data.map_and_batch(
+		dataset = dataset.apply(tf.data.experimental.map_and_batch(
 								map_func=parser, batch_size=batch_size))
-		
-		dataset = dataset.prefetch(buffer_size=batch_size*10)
+		if prefetch_buffer_size > 0:
+			dataset = dataset.prefetch(buffer_size=int(prefetch_buffer_size))
 		iterator = dataset.make_initializable_iterator()
 		feed_dict = {filename_placeholder: file_paths}
 		run_options = tf.RunOptions(report_tensor_allocations_upon_oom = True)
@@ -167,7 +170,7 @@ def get_train_inputs(file_paths, parser, batch_size):
 	return _train_input_fn, iterator_initializer_hook
 
 
-def get_eval_inputs(file_paths, parser, batch_size):
+def get_eval_inputs(file_paths, parser, batch_size, prefetch_buffer_size):
 	"""Set up eval inputs in a single batch."""
 	iterator_initializer_hook = IteratorInitializerHook()
 
@@ -179,10 +182,11 @@ def get_eval_inputs(file_paths, parser, batch_size):
 		
 		#dataset = dataset.map(parser, num_parallel_calls=8)
 		#dataset = dataset.batch(batch_size)
-		dataset = dataset.apply(tf.contrib.data.map_and_batch(
+		dataset = dataset.apply(tf.data.experimental.map_and_batch(
 								map_func=parser, batch_size=batch_size))
 
-		dataset = dataset.prefetch(buffer_size=batch_size*10)
+		if prefetch_buffer_size > 0:
+			dataset = dataset.prefetch(buffer_size=int(prefetch_buffer_size))
 		iterator = dataset.make_initializable_iterator()
 		feed_dict = {filename_placeholder: file_paths}
 		run_options = tf.RunOptions(report_tensor_allocations_upon_oom = True)
@@ -244,12 +248,12 @@ def get_eval_metric_fns():
 					tfr.metrics.RankingMetricKey.MRR, topn=topn)
 			for topn in [10]
 	})
-	#metric_fns.update({
-	#		"metric/%s" % name: tfr.metrics.make_ranking_metric_fn(name) for name in [
-	#				tfr.metrics.RankingMetricKey.ARP,
+	metric_fns.update({
+			"metric/%s" % name: tfr.metrics.make_ranking_metric_fn(name) for name in [
+					tfr.metrics.RankingMetricKey.ARP,
 					#tfr.metrics.RankingMetricKey.ORDERED_PAIR_ACCURACY,
-	#		]
-	#})
+			]
+	})
 	metric_fns.update({
 			"metric/ndcg@%d" % topn: tfr.metrics.make_ranking_metric_fn(
 					tfr.metrics.RankingMetricKey.NDCG, topn=topn)
@@ -261,15 +265,20 @@ def make_transform_fn(input_size, context_feature_columns, example_feature_colum
 
 	def _transform_fn(features, mode):
 		"""Splits the features into context and per-example features."""
+		
+		'''
 		print('Before feature transform_fn')
 		for k in features:
+			print(k)
 			print(features[k].shape)
+		'''
 		context_features, example_features = feature_lib.encode_listwise_features(
 				features,
 				input_size=input_size,
 				context_feature_columns=context_feature_columns,
 				example_feature_columns=example_feature_columns,
 				mode=mode)
+		'''
 		print('After feature transform_fn')
 		for k in example_features:
 			print(k)
@@ -277,6 +286,7 @@ def make_transform_fn(input_size, context_feature_columns, example_feature_colum
 		for k in context_features:
 			print(k)
 			print(context_features[k].shape)
+		'''
 		return context_features, example_features
 
 	return _transform_fn
@@ -285,18 +295,19 @@ def make_transform_fn(input_size, context_feature_columns, example_feature_colum
 def train_and_eval():
 	"""Train and Evaluate."""
 	# load collection
-	data = data_util.MsMarcoData(FLAGS.setting_path)
+	data = data_util.MsMarcoData(FLAGS.setting_path, FLAGS.list_size)
 	context_feature_columns, example_feature_columns = data.create_feature_columns()
 
 	# load train/vali/test
 	train_input_fn, train_hook = get_train_inputs(data.get_file_paths("train", FLAGS.list_size), data.get_TFReord_parser(),
-												FLAGS.train_batch_size)
+												FLAGS.train_batch_size, FLAGS.train_prefetch_buffer_size)
 
+	#vali_input_fn, vali_hook = get_eval_inputs(data.get_file_paths("dev", data.list_size), data.get_TFReord_parser(), 
 	vali_input_fn, vali_hook = get_eval_inputs(data.get_file_paths("dev", data.list_size), data.get_TFReord_parser(), 
-												FLAGS.train_batch_size)
+												FLAGS.train_batch_size, FLAGS.dev_prefetch_buffer_size)
 
 	test_input_fn, test_hook = get_eval_inputs(data.get_file_paths("eval", data.list_size), data.get_TFReord_parser(), 
-												FLAGS.train_batch_size)
+												FLAGS.train_batch_size, FLAGS.eval_prefetch_buffer_size)
 
 
 	def _train_op_fn(loss):
@@ -351,7 +362,7 @@ def eval_only():
 
 	# load test
 	test_input_fn, test_hook = get_eval_inputs(data.get_file_paths("eval", FLAGS.list_size), data.get_TFReord_parser(), 
-												FLAGS.train_batch_size)
+												FLAGS.train_batch_size. FLAGS.eval_prefetch_buffer_size)
 	input_size = FLAGS.list_size if FLAGS.list_size > 0 else data.max_list_length
 	tf.logging.info("Actual list size: {}".format(input_size))
 
