@@ -81,7 +81,7 @@ flags.DEFINE_integer("eval_prefetch_buffer_size", -1, "The batch size for traini
 flags.DEFINE_integer("num_train_steps", 100000, "Number of steps for training.")
 
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate for optimizer.")
-flags.DEFINE_float("dropout_rate", 0.5, "The dropout rate before output layer.")
+flags.DEFINE_float("dropout_rate", 0.0, "The dropout rate before output layer.")
 flags.DEFINE_list("hidden_layer_dims", ["256", "128", "64"],
 									"Sizes for hidden layers.")
 
@@ -92,6 +92,7 @@ flags.DEFINE_integer("rank_cut", 10, "The number of documents output for each qu
 
 flags.DEFINE_string("loss", "pairwise_logistic_loss",
 										"The RankingLossKey for loss function.")
+flags.DEFINE_string("activate", "relu", "The activate function in the network.")
 
 flags.DEFINE_boolean("evaluation_only", False, "Only conduct evaluation if True.")
 flags.DEFINE_boolean("train_from_scratch", False, 
@@ -228,13 +229,19 @@ def make_score_fn(data):
 			tf.summary.scalar("input_min", tf.reduce_min(input_layer))
 
 		is_training = (mode == tf.estimator.ModeKeys.TRAIN)
+		tf.logging.info("Activate function: %s" % FLAGS.activate)
 		cur_layer = tf.layers.batch_normalization(input_layer, training=is_training)
 		for i, layer_width in enumerate(int(d) for d in FLAGS.hidden_layer_dims):
 			cur_layer = tf.layers.dense(cur_layer, units=layer_width)
 			cur_layer = tf.layers.batch_normalization(cur_layer, training=is_training)
-			cur_layer = tf.nn.relu(cur_layer)
-			tf.summary.scalar("fully_connected_{}_sparsity".format(i),
-												tf.nn.zero_fraction(cur_layer))
+			activate = tf.nn.elu
+			if FLAGS.activate == 'relu':
+				activate = tf.nn.relu
+				tf.summary.scalar("fully_connected_{}_sparsity".format(i),
+													tf.nn.zero_fraction(cur_layer))
+			elif FLAGS.activate == 'tanh':
+				activate = tf.nn.tanh
+			cur_layer = activate(cur_layer)
 		cur_layer = tf.layers.dropout(
 				cur_layer, rate=FLAGS.dropout_rate, training=is_training)
 		logits = tf.layers.dense(cur_layer, units=FLAGS.group_size)

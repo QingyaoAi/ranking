@@ -555,6 +555,8 @@ class MsMarcoData:
 			for qid in qid_to_doc:
 				feature_map = {}
 				id_list = [str(qid)]
+				no_rel_doc = True
+				all_empty_doc = True
 				# create label
 				feature_map['label'] = [-1.0 for _ in range(list_size)]
 				for i in range(len(qid_to_doc[qid])):
@@ -562,11 +564,15 @@ class MsMarcoData:
 						pid = qid_to_doc[qid][i][0]
 						label = qid_to_doc[qid][i][1]
 						feature_map['label'][i] = label
+						if label > 0:
+							no_rel_doc = False
 						id_list.append(str(pid))
 					else:
 						discarded_docs += 1
 					total_docs += 1
-				example_id_fout.write(bytes('%s\n' % '\t'.join(id_list), 'UTF-8')) # output qid and corresponding pid list
+
+				if no_rel_doc: # if there are no relevant document, discard the query
+					continue
 
 				# create context features
 				for k in context_feature_columns:
@@ -616,10 +622,14 @@ class MsMarcoData:
 									feature_map[list_idx_key].append(i)
 									feature_map[idx_key].append(j)
 									feature_map[value_key].append(example_feature_vector[j])
+								if len(example_feature_vector) > 0:
+									all_empty_doc = False
 					else:
 						feature_map[k] = dense_features[k]
 				
-				
+				if all_empty_doc: # if all docs are empty, discard the query
+					continue
+
 				# convert feature map to example
 				for key in feature_map:
 					if key.endswith('idx') or key.endswith('int_value'): # key for sparse features
@@ -640,6 +650,7 @@ class MsMarcoData:
 
 				# write to TFRecord file
 				fout.write(feature_example.SerializeToString())
+				example_id_fout.write(bytes('%s\n' % '\t'.join(id_list), 'UTF-8')) # output qid and corresponding pid list
 				count_record += 1
 				if count_record % 10000 == 0:
 					fout.close()
