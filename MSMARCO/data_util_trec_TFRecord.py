@@ -109,6 +109,7 @@ class MsMarcoData:
 					_add_words_to_vocab(words, True)
 
 			# add query words
+			query_words = set()
 			query_files = { x: self.settings['QUERY_PATH'] + '/queries.%s.json' %x for x in self.SET_LIST}
 			for set_name in self.SET_LIST:
 				if not os.path.exists(query_files[set_name]):
@@ -118,13 +119,17 @@ class MsMarcoData:
 					for query in data['queries']:
 						qid = int(query['number'])
 						query_text = query['text'].replace('#combine( ', '').replace(' )', '')
-						_add_words_to_vocab(self._tokenize(query_text), False)
+						words = self._tokenize(query_text)
+						for w in words:
+							query_words.add(w)
+						_add_words_to_vocab(words, False)
 
 			# remove words with low frequency
 			words = self.vocabulary.keys()
 			del_words = set()
 			for w in words:
-				if self.vocabulary[w][0] < self.settings['word_min_count']:
+				# remove words that has not appeared in the queries and not reach the min_count in the corpus
+				if self.vocabulary[w][0] < self.settings['word_min_count'] and w not in query_words:
 					del_words.add(w)
 			for w in del_words:
 				self.vocabulary.pop(w, None)
@@ -396,7 +401,9 @@ class MsMarcoData:
 		for t in query_terms:
 			tf = 0.0
 			cf, df = self.vocab_info[t]
-			idf = self.doc_count/(df+0.5)
+			cf += 0.5
+			df += 0.5
+			idf = self.doc_count/df
 			if t in doc_terms:
 				tf = doc_terms[t]	
 			# TF, IDF, TF-IDF
