@@ -32,7 +32,7 @@ DOCLINES = __doc__.split('\n')
 _VERSION = '0.1.0'
 
 REQUIRED_PACKAGES = [
-    'absl-py >= 0.1.6', 'numpy >= 1.13.3', 'six >= 1.10.0',
+    'absl-py >= 0.1.6', 'numpy == 1.13.3', 'six >= 1.10.0', 'nltk==1.12.0',
     'tensorflow-gpu >= 1.12.0'
 ]
 
